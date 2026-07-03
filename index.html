@@ -93,24 +93,26 @@ const defaultEntries=()=>ACTIVITIES.map(t=>({...t,executed:false,executedAt:null
 
 const compressImg=(dataUrl,maxW,quality)=>{maxW=maxW||640;quality=quality||0.5;return new Promise(resolve=>{const img=new Image();img.onload=()=>{const cvs=document.createElement('canvas');let w=img.width,h=img.height;if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}cvs.width=w;cvs.height=h;cvs.getContext('2d').drawImage(img,0,0,w,h);resolve(cvs.toDataURL('image/jpeg',quality));};img.onerror=()=>resolve(dataUrl);img.src=dataUrl;});};
 
-const loadFS=async(uid,dt)=>{try{const doc=await db.collection('entries').doc(uid).collection('days').doc(dk(dt)).get();if(doc.exists){const d=doc.data();return(d.activities||[]).map(a=>({...a,evidences:a.evidences||(a.evidence?[a.evidence]:[])}));}return defaultEntries();}catch(e){console.error('loadFS:',e);return defaultEntries();}};
+const loadFS=(uid,dt,callback)=>db.collection('entries').doc(uid).collection('days').doc(dk(dt)).onSnapshot(doc=>{console.log('📡 loadFS snapshot recebido para',uid,dk(dt));if(doc.exists){const d=doc.data();const acts=(d.activities||[]).map(a=>({...a,evidences:a.evidences||(a.evidence?[a.evidence]:[])}));console.log('   →',acts.length,'atividades');callback(acts);}else{console.log('   → Doc não existe, retornando default');callback(defaultEntries());}},err=>{console.error('loadFS listener error:',err);callback(defaultEntries());});
 
 const saveFS=(uid,dt,entries)=>{db.collection('entries').doc(uid).collection('days').doc(dk(dt)).set({activities:entries}).catch(e=>console.error('saveFS:',e));};
 
-const loadFUFS=async(uid,dt)=>{try{const doc=await db.collection('followups').doc(uid).collection('days').doc(dk(dt)).get();return doc.exists?(doc.data().items||[]):[];}catch(e){console.error('loadFUFS:',e);return[];}};
+const loadFUFS=(uid,dt,callback)=>{return db.collection('followups').doc(uid).collection('days').doc(dk(dt)).onSnapshot(doc=>{callback(doc.exists?(doc.data().items||[]):[]);},err=>{console.error('loadFUFS listener error:',err);callback([]);});};
 
 const saveFUFS=(uid,dt,items)=>{db.collection('followups').doc(uid).collection('days').doc(dk(dt)).set({items:items}).catch(e=>console.error('saveFUFS:',e));};
 
-const fetchMonthlyFS=async(uid,ref)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;try{const snap=await db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();let tA=0,tD=0,days=0,dd=[];snap.forEach(doc=>{const acts=doc.data().activities||[];const dn2=acts.filter(a=>a.executed).length;tA+=acts.length;tD+=dn2;days++;const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);dd.push({date:dt2,total:acts.length,done:dn2,pct:acts.length>0?Math.round(dn2/acts.length*100):0});});dd.sort((a,b)=>a.date-b.date);return{tA,tD,days,pct:tA>0?Math.round(tD/tA*100):0,dd};}catch(e){console.error('fetchMonthlyFS:',e);return{tA:0,tD:0,days:0,pct:0,dd:[]};}};
+const fetchMonthlyFS=(uid,ref,callback)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;return db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{let tA=0,tD=0,days=0,dd=[];snap.forEach(doc=>{const acts=doc.data().activities||[];const dn2=acts.filter(a=>a.executed).length;tA+=acts.length;tD+=dn2;days++;const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);dd.push({date:dt2,total:acts.length,done:dn2,pct:acts.length>0?Math.round(dn2/acts.length*100):0});});dd.sort((a,b)=>a.date-b.date);callback({tA,tD,days,pct:tA>0?Math.round(tD/tA*100):0,dd});},err=>{console.error('fetchMonthlyFS listener error:',err);callback({tA:0,tD:0,days:0,pct:0,dd:[]});});};
 
-const fetchTaskAdhFS=async(uid,ref)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;try{const snap=await db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();let days=0;const stats=ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0}));snap.forEach(doc=>{const acts=doc.data().activities||[];days++;acts.forEach(e=>{const m2=stats.find(st=>st.id===e.id);if(m2){m2.tot++;if(e.executed)m2.ex++;}});});return{days,tasks:stats.map(t=>({...t,pct:t.tot>0?Math.round(t.ex/t.tot*100):0}))};}catch(e){console.error('fetchTaskAdhFS:',e);return{days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))};}};
+const fetchTaskAdhFS=(uid,ref,callback)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;return db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{let days=0;const stats=ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0}));snap.forEach(doc=>{const acts=doc.data().activities||[];days++;acts.forEach(e=>{const m2=stats.find(st=>st.id===e.id);if(m2){m2.tot++;if(e.executed)m2.ex++;}});});callback({days,tasks:stats.map(t=>({...t,pct:t.tot>0?Math.round(t.ex/t.tot*100):0}))});},err=>{console.error('fetchTaskAdhFS listener error:',err);callback({days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))});});};
 
-const fetchMonthFUFS=async(uid,ref)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;try{const snap=await db.collection('followups').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();const result=[];snap.forEach(doc=>{const items=doc.data().items||[];const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);const ds=format(dt2,"dd/MM/yyyy");items.forEach(f=>result.push({...f,dateStr:ds}));});return result;}catch(e){console.error('fetchMonthFUFS:',e);return[];}};
+const fetchMonthFUFS=(uid,ref,callback)=>{const y=ref.getFullYear(),m=ref.getMonth(),nw=new Date();const startD=y+'-'+_p(m+1)+'-01';const dim=new Date(y,m+1,0).getDate();const endD=y+'-'+_p(m+1)+'-'+_p(dim);const todayS=dk(nw);const lastD=endD>todayS?todayS:endD;return db.collection('followups').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{const result=[];snap.forEach(doc=>{const items=doc.data().items||[];const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);const ds=format(dt2,"dd/MM/yyyy");items.forEach(f=>result.push({...f,dateStr:ds}));});callback(result);},err=>{console.error('fetchMonthFUFS listener error:',err);callback([]);});};
 
 /* ========== FIRESTORE RANGE QUERIES ========== */
-const fetchRangeFS=async(uid,startD,endD)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD)return{tA:0,tD:0,days:0,pct:0,dd:[]};try{const snap=await db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();let tA=0,tD=0,days=0,dd=[];snap.forEach(doc=>{const acts=doc.data().activities||[];const dn2=acts.filter(a=>a.executed).length;tA+=acts.length;tD+=dn2;days++;const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);dd.push({date:dt2,total:acts.length,done:dn2,pct:acts.length>0?Math.round(dn2/acts.length*100):0});});dd.sort((a,b)=>a.date-b.date);return{tA,tD,days,pct:tA>0?Math.round(tD/tA*100):0,dd};}catch(e){console.error('fetchRangeFS:',e);return{tA:0,tD:0,days:0,pct:0,dd:[]};}};
-const fetchTaskAdhRangeFS=async(uid,startD,endD)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD)return{days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))};try{const snap=await db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();let days=0;const stats=ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0}));snap.forEach(doc=>{const acts=doc.data().activities||[];days++;acts.forEach(e=>{const m2=stats.find(st=>st.id===e.id);if(m2){m2.tot++;if(e.executed)m2.ex++;}});});return{days,tasks:stats.map(t=>({...t,pct:t.tot>0?Math.round(t.ex/t.tot*100):0}))};}catch(e){console.error('fetchTaskAdhRangeFS:',e);return{days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))};}};
-const fetchRangeFUFS=async(uid,startD,endD)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD)return[];try{const snap=await db.collection('followups').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).get();const result=[];snap.forEach(doc=>{const items=doc.data().items||[];const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);const ds=format(dt2,"dd/MM/yyyy");items.forEach(f=>result.push({...f,dateStr:ds}));});return result;}catch(e){console.error('fetchRangeFUFS:',e);return[];}};
+const fetchRangeFS=(uid,startD,endD,callback)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD){callback({tA:0,tD:0,days:0,pct:0,dd:[]});return()=>{};}return db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{let tA=0,tD=0,days=0,dd=[];snap.forEach(doc=>{const acts=doc.data().activities||[];const dn2=acts.filter(a=>a.executed).length;tA+=acts.length;tD+=dn2;days++;const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);dd.push({date:dt2,total:acts.length,done:dn2,pct:acts.length>0?Math.round(dn2/acts.length*100):0});});dd.sort((a,b)=>a.date-b.date);callback({tA,tD,days,pct:tA>0?Math.round(tD/tA*100):0,dd});},err=>{console.error('fetchRangeFS listener error:',err);callback({tA:0,tD:0,days:0,pct:0,dd:[]});});};
+
+const fetchTaskAdhRangeFS=(uid,startD,endD,callback)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD){callback({days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))});return()=>{};}return db.collection('entries').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{let days=0;const stats=ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0}));snap.forEach(doc=>{const acts=doc.data().activities||[];days++;acts.forEach(e=>{const m2=stats.find(st=>st.id===e.id);if(m2){m2.tot++;if(e.executed)m2.ex++;}});});callback({days,tasks:stats.map(t=>({...t,pct:t.tot>0?Math.round(t.ex/t.tot*100):0}))});},err=>{console.error('fetchTaskAdhRangeFS listener error:',err);callback({days:0,tasks:ACTIVITIES.map(a=>({id:a.id,act:a.act,time:a.time,ex:0,tot:0,pct:0}))});});};
+
+const fetchRangeFUFS=(uid,startD,endD,callback)=>{const nw=new Date(),todayS=dk(nw),lastD=endD>todayS?todayS:endD;if(startD>lastD){callback([]);return()=>{};}return db.collection('followups').doc(uid).collection('days').where(firebase.firestore.FieldPath.documentId(),'>=',startD).where(firebase.firestore.FieldPath.documentId(),'<=',lastD).onSnapshot(snap=>{const result=[];snap.forEach(doc=>{const items=doc.data().items||[];const ps=doc.id.split('-');const dt2=new Date(+ps[0],+ps[1]-1,+ps[2]);const ds=format(dt2,"dd/MM/yyyy");items.forEach(f=>result.push({...f,dateStr:ds}));});callback(result);},err=>{console.error('fetchRangeFUFS listener error:',err);callback([]);});};
 
 /* ========== UI COMPONENTS ========== */
 const Ring=({value,size:sz=56,stroke:st=5,color:cl})=>{const r2=(sz-st)/2,c=2*Math.PI*r2,off=c-(value/100)*c;return(<svg width={sz} height={sz} style={{transform:"rotate(-90deg)"}}><circle cx={sz/2} cy={sz/2} r={r2} fill="none" stroke="#d4d2b0" strokeWidth={st}/><circle cx={sz/2} cy={sz/2} r={r2} fill="none" stroke={cl||"#10b981"} strokeWidth={st} strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{transition:"all .7s"}}/></svg>);};
@@ -238,31 +240,30 @@ const mTA=(uid,mode)=>mode==="custom"?gcta(uid):gta(uid);
 const [fuFilterOp,setFuFilterOp]=useState("all");const [fuFilterSt,setFuFilterSt]=useState("all");
 
 /* ===== DATA LOADING ===== */
-useEffect(()=>{if(!user)return;let cancelled=false;setLoading(true);
+useEffect(()=>{if(!user)return;const unsubs=[];setLoading(false);
 const ops=user.role==="user"?[{id:user.id}]:OPS;
-const promises=[];
-ops.forEach(op=>{
-promises.push(loadFS(op.id,date).then(v=>['e',op.id,v]));
-promises.push(loadFUFS(op.id,date).then(v=>['f',op.id,v]));
-promises.push(fetchMonthlyFS(op.id,date).then(v=>['m',op.id,v]));
-promises.push(fetchTaskAdhFS(op.id,date).then(v=>['t',op.id,v]));
-promises.push(fetchMonthFUFS(op.id,date).then(v=>['mf',op.id,v]));
-});
-Promise.all(promises).then(results=>{
-if(cancelled)return;
 const d={},f={},mc={},tc={},mf={};
-results.forEach(([type,uid,val])=>{if(type==='e')d[uid]=val;else if(type==='f')f[uid]=val;else if(type==='m')mc[uid]=val;else if(type==='t')tc[uid]=val;else if(type==='mf')mf[uid]=val;});
-setData(d);setFu(f);setMonthlyCache(mc);setTaskAdhCache(tc);setMonthFUCache(mf);setExpanded({});setEditingOp(false);setLoading(false);
-}).catch(err=>{console.error('Fetch error:',err);if(!cancelled)setLoading(false);});
-return()=>{cancelled=true;};
+ops.forEach(op=>{
+const u1=loadFS(op.id,date,v=>{d[op.id]=v;setData({...d});});unsubs.push(u1);
+const u2=loadFUFS(op.id,date,v=>{f[op.id]=v;setFu({...f});});unsubs.push(u2);
+const u3=fetchMonthlyFS(op.id,date,v=>{mc[op.id]=v;setMonthlyCache({...mc});});unsubs.push(u3);
+const u4=fetchTaskAdhFS(op.id,date,v=>{tc[op.id]=v;setTaskAdhCache({...tc});});unsubs.push(u4);
+const u5=fetchMonthFUFS(op.id,date,v=>{mf[op.id]=v;setMonthFUCache({...mf});});unsubs.push(u5);
+});
+return()=>{unsubs.forEach(u=>typeof u==='function'&&u());};
 },[user,date]);
 
 /* ===== CUSTOM RANGE LOADING ===== */
-useEffect(()=>{if(!user||!customStart||!customEnd||customStart>customEnd)return;let cancelled=false;setCustomLoading(true);
-const ops=user.role==="user"?[{id:user.id}]:OPS;const promises=[];
-ops.forEach(op=>{promises.push(fetchRangeFS(op.id,customStart,customEnd).then(v=>['m',op.id,v]));promises.push(fetchTaskAdhRangeFS(op.id,customStart,customEnd).then(v=>['t',op.id,v]));promises.push(fetchRangeFUFS(op.id,customStart,customEnd).then(v=>['mf',op.id,v]));});
-Promise.all(promises).then(results=>{if(cancelled)return;const mc={},tc={},mf={};results.forEach(([type,uid,val])=>{if(type==='m')mc[uid]=val;else if(type==='t')tc[uid]=val;else if(type==='mf')mf[uid]=val;});setCustomMonthlyCache(mc);setCustomTaskAdhCache(tc);setCustomMonthFUCache(mf);setCustomLoading(false);}).catch(err=>{console.error('Custom fetch err:',err);if(!cancelled)setCustomLoading(false);});
-return()=>{cancelled=true;};},[user,customStart,customEnd]);
+useEffect(()=>{if(!user||!customStart||!customEnd||customStart>customEnd)return;const unsubs=[];setCustomLoading(true);
+const ops=user.role==="user"?[{id:user.id}]:OPS;const mc={},tc={},mf={};let completed=0;
+const checkAllLoaded=()=>{if(completed===ops.length*3){setCustomMonthlyCache({...mc});setCustomTaskAdhCache({...tc});setCustomMonthFUCache({...mf});setCustomLoading(false);}};
+ops.forEach(op=>{
+const u1=fetchRangeFS(op.id,customStart,customEnd,v=>{mc[op.id]=v;completed++;checkAllLoaded();});unsubs.push(u1);
+const u2=fetchTaskAdhRangeFS(op.id,customStart,customEnd,v=>{tc[op.id]=v;completed++;checkAllLoaded();});unsubs.push(u2);
+const u3=fetchRangeFUFS(op.id,customStart,customEnd,v=>{mf[op.id]=v;completed++;checkAllLoaded();});unsubs.push(u3);
+});
+return()=>{unsubs.forEach(u=>typeof u==='function'&&u());};
+},[user,customStart,customEnd]);
 
 useEffect(()=>{setAnim(true);const t=setTimeout(()=>setAnim(false),350);return()=>clearTimeout(t);},[date]);
 
